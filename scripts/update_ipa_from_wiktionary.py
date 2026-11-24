@@ -14,9 +14,13 @@ Both editions render IPA from the same {{th-pron}} module, one IPA per accepted 
   - it matches THAI_PHONOTACTICS regex (see below). This also drops bound forms used only at
     the start of compounds (/ʔaː˧./, trailing dot) and narrow phonetic transcriptions ([mäː˩˥...]).
 
-For each word with at least one valid reading:
+Words in data/sources/manual_overrides.json get their override reading instead of Wiktionary's (manual overrides
+have the highest priority), at the place where Wiktionary's would have been written and without the filters below.
+Overrides for words Wiktionary does not list are applied at the end. They are how known Wiktionary errors are
+corrected: G2P itself never reads manual_overrides.json, only ipa.json.
 
-  - in data/sources/manual_overrides.json: left alone (manual overrides have the highest priority);
+For each other word with at least one valid reading:
+
   - already in ipa.json and its current reading is one of Wiktionary's: left alone (ipa.json holds one reading,
     and that one already matches Wiktionary's);
   - already in ipa.json with another reading: overwritten;
@@ -238,12 +242,20 @@ def main() -> None:
     for word, found in readings.items():
         old = ipa.get(word, "")
         listed = " ".join(found.order)
+        if word in manual:
+            new = manual[word]
+            if old == new:
+                stats["kept: manual override"] += 1
+            elif old:
+                stats["overwritten: manual override"] += 1
+                rows.append((word, "overwritten-manual", old, new, listed, "manual"))
+                ipa[word] = new
+            else:
+                candidates.append((word, new, listed, "manual"))
+            continue
         if not found.counts:
             stats["rejected (no reading matches the phonotactics regex)"] += 1
             rows.append((word, "rejected", old, "", " ".join(found.rejected), ""))
-            continue
-        if word in manual:
-            stats["kept: manual override"] += 1
             continue
         if old in found.counts:
             stats["kept: current reading is one of Wiktionary's"] += 1
@@ -266,7 +278,7 @@ def main() -> None:
     lookup = dict(ipa)
     kept = set()
     for word, new, listed, sources_used in sorted(candidates, key=lambda c: len(c[0])):
-        if not args.keep_compositional and split_readings(word, lookup) == {comparable(new)}:
+        if word not in manual and not args.keep_compositional and split_readings(word, lookup) == {comparable(new)}:
             stats["skipped new: compositional (reads as the dictionary words it splits into)"] += 1
             rows.append((word, "skipped-compositional", "", new, listed, sources_used))
             continue
@@ -275,20 +287,31 @@ def main() -> None:
     for word, new, listed, sources_used in candidates:  # appended in Wiktionary order
         if word not in kept:
             continue
-        stats["new"] += 1
-        rows.append((word, "new", "", new, listed, sources_used))
+        action = "new-manual" if word in manual else "new"
+        stats[action] += 1
+        rows.append((word, action, "", new, listed, sources_used))
         ipa[word] = new
         if word not in dict_set:
             dict_words.append(word)
             dict_set.add(word)
             stats["new: also added to dict.txt"] += 1
+    for word, new in manual.items():  # overrides for words Wiktionary does not list
+        if word in readings or ipa.get(word) == new:
+            continue
+        stats["manual override (not in Wiktionary)"] += 1
+        rows.append((word, "manual-only", ipa.get(word, ""), new, "", "manual"))
+        ipa[word] = new
+        if word not in dict_set:
+            dict_words.append(word)
+            dict_set.add(word)
 
     print(f"Wiktionary words: {len(readings):,} ({', '.join(f'{n}={p}' for n, p in sources)})")
     for key, value in sorted(stats.items()):
         print(f"  {key}: {value:,}")
 
     # Every reading this script writes passes the regex (rejected words keep their old reading, if any).
-    assert all(THAI_PHONOTACTICS.fullmatch(ipa[word]) for word, action, *_ in rows if action in ("overwritten", "new"))
+    assert all(THAI_PHONOTACTICS.fullmatch(ipa[word]) for word, action, *_ in rows
+               if action in ("overwritten", "new", "overwritten-manual", "new-manual", "manual-only"))
     # G2P keys must stay in dict.txt.
     assert set(ipa) <= dict_set
 
