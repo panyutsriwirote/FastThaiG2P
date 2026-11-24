@@ -24,6 +24,12 @@ For each word with at least one valid reading:
     without a dict.txt word is never used). New entries are appended at the end of both files. New words shorter
     than --min-new-length characters (default 3) are skipped: most are bare letters and undotted abbreviations
     (ก, จ, กจ, ง.), and as tokenizer words they cut up other text ("ตนเอง..." -> ตน|เอ|ง.|.., "ซวง" -> ซ|วง).
+    New words that are compositional are skipped too (--keep-compositional adds them): every way of splitting the
+    word into the fewest dictionary words gives the same reading as Wiktionary's (การสอบ = การ + สอบ). They add no
+    reading, but as tokenizer words they make newmm pick other splits of the text around them, which lose linking
+    syllables: กรรมการ|สอบ -> กรรม|การสอบ (/kam.ma.kaːn/ -> /kam.kaːn/), ราชการ|ไป -> ราช|การไป. Splits are made from
+    the existing words (with their overwritten readings) and the new words already kept, shortest words first.
+    Readings are compared without final /ʔ/, which Wiktionary writes only at the end of a word.
 
 When a word has several readings, the one listed most often across entries and both editions is chosen (เพลา:
 /pʰlaw˧/ in three entries, /pʰeː˧.laː˧/ in one); ties go to the first one seen (English edition first).
@@ -125,6 +131,45 @@ class Readings:
         return next(ipa for ipa in self.order if self.counts[ipa] == top)
 
 
+_FINAL_GLOTTAL = re.compile(r"ʔ(?=[˥˦˧˨˩])")
+_MAX_SPLIT_READINGS = 16
+
+
+def comparable(ipa: str) -> str:
+    return _FINAL_GLOTTAL.sub("", ipa.strip("/"))
+
+
+def split_readings(word: str, lookup: dict[str, str]) -> set[str] | None:
+    """Readings of word split into the fewest (at least two) words of lookup; None if it cannot be split.
+
+    Spaces are free pieces with no reading, as G2P skips whitespace tokens. More than _MAX_SPLIT_READINGS different
+    readings count as unsplittable (the word is then kept).
+    """
+    # best[i]: (pieces, readings) of the fewest-pieces splits of word[:i].
+    best: list[tuple[int, set[str]] | None] = [None] * (len(word) + 1)
+    best[0] = (0, {""})
+    for end in range(1, len(word) + 1):
+        for start in range(end):
+            if best[start] is None or (start == 0 and end == len(word)):
+                continue
+            piece = word[start:end]
+            if piece.isspace():
+                pieces, reading = 0, ""
+            elif piece in lookup:
+                pieces, reading = 1, comparable(lookup[piece])
+            else:
+                continue
+            count = best[start][0] + pieces
+            readings = {".".join(filter(None, (r, reading))) for r in best[start][1]}
+            if best[end] is None or count < best[end][0]:
+                best[end] = (count, readings)
+            elif count == best[end][0]:
+                best[end][1].update(readings)
+        if best[end] is not None and len(best[end][1]) > _MAX_SPLIT_READINGS:
+            return None
+    return best[-1][1] if best[-1] is not None and best[-1][0] >= 2 else None
+
+
 def read_jsonl(path: Path):
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as lines:
@@ -171,6 +216,8 @@ def main() -> None:
     parser.add_argument("--no-new", action="store_true", help="only overwrite existing words, add none")
     parser.add_argument("--min-new-length", type=int, default=3, metavar="N",
                         help="skip new words shorter than N characters (default: 3; 1 adds all)")
+    parser.add_argument("--keep-compositional", action="store_true",
+                        help="also add new words whose reading is that of the dictionary words they split into")
     args = parser.parse_args()
 
     sources = [(name, path) for name, path in (("en", args.en), ("th", args.th)) if path]
@@ -186,7 +233,8 @@ def main() -> None:
     readings = collect(sources)
 
     stats = Counter()
-    rows = []  # (word, action, old, new, all readings, sources)
+    rows = []  # (word, action, old, new, all readings or split, sources)
+    candidates = []  # new words: (word, new, listed, sources_used)
     for word, found in readings.items():
         old = ipa.get(word, "")
         listed = " ".join(found.order)
@@ -212,13 +260,28 @@ def main() -> None:
             stats[f"skipped new: shorter than {args.min_new_length} characters"] += 1
             rows.append((word, "skipped-short", "", new, listed, sources_used))
         else:
-            stats["new"] += 1
-            rows.append((word, "new", "", new, listed, sources_used))
-            ipa[word] = new
-            if word not in dict_set:
-                dict_words.append(word)
-                dict_set.add(word)
-                stats["new: also added to dict.txt"] += 1
+            candidates.append((word, new, listed, sources_used))
+
+    # New words, after all overwrites; shortest first, so the words a compound splits into are already decided.
+    lookup = dict(ipa)
+    kept = set()
+    for word, new, listed, sources_used in sorted(candidates, key=lambda c: len(c[0])):
+        if not args.keep_compositional and split_readings(word, lookup) == {comparable(new)}:
+            stats["skipped new: compositional (reads as the dictionary words it splits into)"] += 1
+            rows.append((word, "skipped-compositional", "", new, listed, sources_used))
+            continue
+        lookup[word] = new
+        kept.add(word)
+    for word, new, listed, sources_used in candidates:  # appended in Wiktionary order
+        if word not in kept:
+            continue
+        stats["new"] += 1
+        rows.append((word, "new", "", new, listed, sources_used))
+        ipa[word] = new
+        if word not in dict_set:
+            dict_words.append(word)
+            dict_set.add(word)
+            stats["new: also added to dict.txt"] += 1
 
     print(f"Wiktionary words: {len(readings):,} ({', '.join(f'{n}={p}' for n, p in sources)})")
     for key, value in sorted(stats.items()):
