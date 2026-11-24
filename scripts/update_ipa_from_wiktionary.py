@@ -82,7 +82,9 @@ THAI_CODAS = sorted({
     "p̚", "t̚",      "k̚", "ʔ",
     "w",        "j",
     # Only in foreign loanwords.
-    "f", "s", "l", "s̚"
+    "f", "s", "l", "s̚", "t͡ɕʰ",
+    # A final consonant followed by /s/: ควินซ์ /kʰwins˦˥/, โรดส์ /roːt̚s˦˥/, ไซเบอร์เนติกส์ /...tik̚s˨˩/
+    *(coda + "s" for coda in ("m", "n", "ŋ", "p̚", "t̚", "k̚", "w", "j", "l")),
 }, key=len, reverse=True)
 
 THAI_TONES = sorted({
