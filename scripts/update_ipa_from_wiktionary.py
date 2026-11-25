@@ -34,6 +34,7 @@ For each other word with at least one valid reading:
     syllables: กรรมการ|สอบ -> กรรม|การสอบ (/kam.ma.kaːn/ -> /kam.kaːn/), ราชการ|ไป -> ราช|การไป. Splits are made from
     the existing words (with their overwritten readings) and the new words already kept, shortest words first.
     Readings are compared without final /ʔ/, which Wiktionary writes only at the end of a word.
+    A manual override of a new word is the reading compared; if it reads as its parts, the word is skipped too.
 
 When a word has several readings, the one listed most often across entries and both editions is chosen (เพลา:
 /pʰlaw˧/ in three entries, /pʰeː˧.laː˧/ in one); ties go to the first one seen (English edition first).
@@ -91,10 +92,11 @@ THAI_CODAS = sorted({
     "m",  "n",       "ŋ",
     "p̚", "t̚",      "k̚", "ʔ",
     "w",        "j",
-    # Only in foreign loanwords.
-    "f", "s", "l", "s̚", "t͡ɕʰ",
+    # Only in foreign loanwords. No /l/: Thai speakers say a final English /l/ as /w/ or /n/ (เซลล์ /sew˧/,
+    # บิลเลียด /bin˧.lia̯t̚˥˩/), so Wiktionary's /l/ codas are rejected here and corrected in the manual overrides.
+    "f", "s", "s̚", "t͡ɕʰ",
     # A final consonant followed by /s/: ควินซ์ /kʰwins˦˥/, โรดส์ /roːt̚s˦˥/, ไซเบอร์เนติกส์ /...tik̚s˨˩/
-    *(coda + "s" for coda in ("m", "n", "ŋ", "p̚", "t̚", "k̚", "w", "j", "l")),
+    *(coda + "s" for coda in ("m", "n", "ŋ", "p̚", "t̚", "k̚", "w", "j")),
 }, key=len, reverse=True)
 
 THAI_TONES = sorted({
@@ -275,10 +277,12 @@ def main() -> None:
             candidates.append((word, new, listed, sources_used))
 
     # New words, after all overwrites; shortest first, so the words a compound splits into are already decided.
-    lookup = dict(ipa)
+    # Overrides for words Wiktionary does not list are written at the end, but the filter must already see them:
+    # otherwise a second run (reading the overridden ipa.json) would split compounds differently.
+    lookup = dict(ipa) | {word: new for word, new in manual.items() if word not in readings}
     kept = set()
     for word, new, listed, sources_used in sorted(candidates, key=lambda c: len(c[0])):
-        if word not in manual and not args.keep_compositional and split_readings(word, lookup) == {comparable(new)}:
+        if not args.keep_compositional and split_readings(word, lookup) == {comparable(new)}:
             stats["skipped new: compositional (reads as the dictionary words it splits into)"] += 1
             rows.append((word, "skipped-compositional", "", new, listed, sources_used))
             continue
