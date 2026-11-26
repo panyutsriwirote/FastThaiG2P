@@ -17,6 +17,8 @@ from pathlib import Path
 import boto3
 from botocore.config import Config
 
+from extract_wiktionary_ipa import full_readings
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 PROMPT_PATH = Path(__file__).parent / "ipa_prompt.txt"
 DICT_PATH = DATA_DIR / "dict.txt"
@@ -54,7 +56,8 @@ def save_progress(data: dict[str, str]):
 def get_words_to_generate() -> list[str]:
     dict_words = set(DICT_PATH.read_text("utf-8").splitlines())
     dict_words.discard("")
-    wiktionary = set(json.loads(WIKTIONARY_PATH.read_text("utf-8")).keys())
+    # Words with a full Wiktionary reading need none (bound forms and rejected-only words still do).
+    wiktionary = {w for w, listed in json.loads(WIKTIONARY_PATH.read_text("utf-8")).items() if full_readings(listed)}
     already_done = set(load_progress().keys())
 
     remaining = dict_words - wiktionary - already_done

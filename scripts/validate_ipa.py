@@ -7,6 +7,8 @@ import json
 import re
 from pathlib import Path
 
+from extract_wiktionary_ipa import full_readings
+
 DATA_DIR = Path(__file__).parent.parent / "data"
 WIKTIONARY_PATH = DATA_DIR / "sources" / "wiktionary_ipa.json"
 GENERATED_PATH = DATA_DIR / "sources" / "generated_ipa.json"
@@ -37,7 +39,9 @@ def classify_error(expected: str, got: str) -> str:
 
 
 def main():
-    wiktionary = json.loads(WIKTIONARY_PATH.read_text("utf-8"))
+    # Every full reading Wiktionary lists for each word, preferred first
+    wiktionary = {w: full for w, listed in json.loads(WIKTIONARY_PATH.read_text("utf-8")).items()
+                  if (full := full_readings(listed))}
     generated = json.loads(GENERATED_PATH.read_text("utf-8"))
 
     # The generation script skips Wiktionary words by design, so there's no
@@ -88,9 +92,9 @@ def main():
                       "syllable-count": [], "other": []}
 
     for word in sorted(overlap):
-        expected = wiktionary[word]
+        expected = wiktionary[word][0]
         got = generated[word]
-        if expected == got:
+        if got in wiktionary[word]:
             exact += 1
         else:
             cls = classify_error(expected, got)

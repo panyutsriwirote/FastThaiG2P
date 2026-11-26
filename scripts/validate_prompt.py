@@ -16,6 +16,8 @@ from pathlib import Path
 import boto3
 from botocore.config import Config
 
+from extract_wiktionary_ipa import full_readings
+
 PROMPT_PATH = Path(__file__).parent / "ipa_prompt.txt"
 WIKTIONARY_IPA_PATH = Path(__file__).parent.parent / "data" / "sources" / "wiktionary_ipa.json"
 
@@ -126,7 +128,9 @@ def main():
     random.seed(42)
 
     prompt = PROMPT_PATH.read_text(encoding="utf-8")
-    wiktionary = json.loads(WIKTIONARY_IPA_PATH.read_text(encoding="utf-8"))
+    # Wiktionary's preferred full reading of each word
+    wiktionary = {w: full[0] for w, listed in json.loads(WIKTIONARY_IPA_PATH.read_text(encoding="utf-8")).items()
+                  if (full := full_readings(listed))}
 
     # Exclude abbreviations (words with . / or single characters)
     eligible = {w: ipa for w, ipa in wiktionary.items()
